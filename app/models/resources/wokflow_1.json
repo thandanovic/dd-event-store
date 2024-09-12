@@ -1,0 +1,70 @@
+{
+    "id": "workflow_1",
+    "name": "Example Workflow",
+    "steps": [
+      {
+        "id": "step_1",
+        "type": "Condition",
+        "condition": {
+          "field": "payment.amount",
+          "operator": "GreaterThan",
+          "value": 1000
+        },
+        "true_steps": [
+          "step_2"  
+        ],
+        "false_steps": [
+          "step_3"  
+        ]
+      },
+      {
+        "id": "step_2",
+        "type": "Processor",
+        "actions": [
+          {
+            "type": "Math",
+            "operation": "Add",
+            "operand1": "amount",
+            "operand2": 500,
+            "result_field": "new_amount"
+          },
+          {
+            "type": "Action",
+            "action_type": "Email",
+            "template": "approval_template",
+            "to": "recipient@example.com",
+            "attachments": ["doc_id_123"]
+          }
+        ]
+      },
+      {
+        "id": "step_3",
+        "type": "Condition",
+        "condition": {
+          "field": "submission_date",
+          "operator": "LessThan",
+          "value": "2024-01-01T00:00:00Z"
+        },
+        "true_steps": [
+          "step_4"  
+        ],
+        "false_steps": [
+          "step_5"  
+        ]
+      },
+      {
+        "id": "step_4",
+        "type": "Action",
+        "action_type": "SMS",
+        "template": "notification_template",
+        "to": "lawfirm_owners"
+      },
+      {
+        "id": "step_5",
+        "type": "Action",
+        "action_type": "Document",
+        "template": "rejection_template"
+      }
+    ]
+  }
+  

@@ -1,0 +1,14 @@
+{
+  "id": "workflow_1",
+  "name": "Update Descripton Based of Name",
+  "steps": [
+    {
+      "id": "step_1",
+      "type": "Action",
+      "action_type": "model_update",
+      "model": "Post",
+      "field": "content",
+      "value": "This is a post with the title of '{{title}}'"
+    }
+  ]
+}
