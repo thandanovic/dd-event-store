@@ -1,6 +1,9 @@
 require 'sidekiq/web'
 Rails.application.routes.draw do
-  resources :posts
+  resources :posts do
+    resources :tasks
+  end
+  
   mount RailsEventStore::Browser => '/res' if Rails.env.development?
   # Define your application routes per the DSL in https://guides.rubyonrails.org/routing.html
 

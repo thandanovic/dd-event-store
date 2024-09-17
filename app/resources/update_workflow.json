@@ -1,6 +1,6 @@
 {
   "id": "workflow_1",
-  "name": "Update Descripton Based of Name",
+  "name": "Update Description Based on Name and Create Task",
   "steps": [
     {
       "id": "step_1",
@@ -9,6 +9,30 @@
       "model": "Post",
       "field": "content",
       "value": "This is a post with the title of '{{title}}'"
+    },
+    {
+      "id": "step_2",
+      "type": "Condition",
+      "condition": {
+        "field": "title",
+        "operator": "Equal",
+        "value": "erol"
+      },
+      "true_steps": [
+        "step_3"
+      ],
+      "false_steps": []
+    },
+    {
+      "id": "step_3",
+      "type": "Action",
+      "action_type": "model_insert",
+      "model": "Task",
+      "attributes": {
+        "name": "This is created from post with title '{{title}}'",
+        "description": "{{content}}",
+        "post_id": "{{post_id}}"
+      }
     }
   ]
 }
