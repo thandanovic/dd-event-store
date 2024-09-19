@@ -3,21 +3,15 @@ class WorkflowProcessor
     @workflow = workflow
     @current_step = workflow.definition["steps"].first["id"]
     @workflow_execution = WorkflowExecution.create!(workflow: workflow, status: :not_started)
-    
   end
 
   def execute(event)
-
     payload = event.data
-
-
     @workflow_execution.update!(status: :in_progress, workflow_event_store_id: event.correlation_id)
-
-    puts "STEP"
-    puts @current_step
 
     while @current_step
       step = find_step(@current_step)
+
       case step["type"]
       when "Condition"
         handle_condition(step, payload)
@@ -28,16 +22,11 @@ class WorkflowProcessor
       end
       @current_step = find_next_step(step, payload)
     end
-
     @workflow_execution.update!(status: :success)
-
   rescue StandardError => e
     @workflow_execution.update!(status: :failed, error_message: e.message)
     raise e
-    # add logic to write which step failed
   end
-
-
 
   private
 
@@ -45,14 +34,24 @@ class WorkflowProcessor
     @workflow.definition["steps"].find { |s| s["id"] == step_id }
   end
 
-  def find_next_step(step, payload)
-    if step["type"] == "Condition"
-      evaluate_condition(step["condition"], payload) ? step["true_steps"].first : step["false_steps"].first
+  def handle_condition(step, payload)
+    if evaluate_condition(step["condition"], payload, step)
+      @current_step = step["true_steps"].first
+    else
+      @current_step = step["false_steps"].first
     end
   end
 
-  def handle_condition(step, payload)
-    # Evaluate the condition and set the next step based on its result
+  def find_next_step(step, payload)
+    if step["type"] == "Condition"
+      condition_result = evaluate_condition(step["condition"], payload, step)
+      return step["true_steps"].first if condition_result
+      return step["false_steps"].first
+    else
+      current_index = @workflow.definition["steps"].index(step)
+      next_step = @workflow.definition["steps"][current_index + 1]
+      next_step ? next_step["id"] : nil
+    end
   end
 
   def handle_processor(step, payload)
@@ -67,9 +66,6 @@ class WorkflowProcessor
   end
 
   def handle_action(step, payload)
-    puts "handle_action"
-    puts step.inspect
-  
     case step["action_type"]
     when "Email"
       send_email(step, payload)
@@ -79,44 +75,49 @@ class WorkflowProcessor
       send_sms(step, payload)
     when "model_update"
       model_update(step, payload)
+    when "model_insert"
+      model_insert(step, payload)
     end
+
+    @current_step = find_next_step(step, payload)
   end
 
-  def evaluate_condition(condition, payload)
+  def evaluate_condition(condition, payload, step)
     field_value = payload[condition["field"]]
-    case condition["operator"]
-    when "Equal"
-      field_value == condition["value"]
-    when "NotEqual"
-      field_value != condition["value"]
-    when "GreaterThan"
-      field_value > condition["value"]
-    when "LessThan"
-      field_value < condition["value"]
-    when "GreaterThanOrEqual"
-      field_value >= condition["value"]
-    when "LessThanOrEqual"
-      field_value <= condition["value"]
-    when "Between"
-      value_range = condition["value"]
-      value_range.include?(field_value)
-    when "In"
-      condition["value"].include?(field_value)
-    when "Like"
-      field_value =~ /#{condition["value"]}/
-    when "IsNull"
-      field_value.nil?
-    when "IsNotNull"
-      !field_value.nil?
-    when "And"
-      condition["sub_conditions"].all? { |sub_condition| evaluate_condition(sub_condition, payload) }
-    when "Or"
-      condition["sub_conditions"].any? { |sub_condition| evaluate_condition(sub_condition, payload) }
-    when "Not"
-      !evaluate_condition(condition["sub_condition"], payload)
-    else
-      false
-    end
+    result = case condition["operator"]
+             when "Equal"
+               field_value == condition["value"]
+             when "NotEqual"
+               field_value != condition["value"]
+             when "GreaterThan"
+               field_value > condition["value"]
+             when "LessThan"
+               field_value < condition["value"]
+             when "GreaterThanOrEqual"
+               field_value >= condition["value"]
+             when "LessThanOrEqual"
+               field_value <= condition["value"]
+             when "Between"
+               value_range = condition["value"]
+               value_range.include?(field_value)
+             when "In"
+               condition["value"].include?(field_value)
+             when "Like"
+               field_value =~ /#{condition["value"]}/
+             when "IsNull"
+               field_value.nil?
+             when "IsNotNull"
+               !field_value.nil?
+             when "And"
+               condition["sub_conditions"].all? { |sub_condition| evaluate_condition(sub_condition, payload, step) }
+             when "Or"
+               condition["sub_conditions"].any? { |sub_condition| evaluate_condition(sub_condition, payload, step) }
+             when "Not"
+               !evaluate_condition(condition["sub_condition"], payload, step)
+             else
+               false
+             end
+    result
   end
 
   def perform_math(action, payload)
@@ -136,42 +137,49 @@ class WorkflowProcessor
   end
 
   def model_update(step, payload)
-
-    puts "model_update"
-    puts step.inspect
-    puts payload.inspect
-
-
-
-
     resource_type = payload[:resource_type]
     resource = JSON.parse(payload[:resource])
-
-    puts resource.inspect
-    puts resource_type.inspect
-
-    
+    payload.merge!(resource)
     field = step["field"]
-    value = get_value(resource, step["value"])
-    record = resource_type.constantize.find(resource["id"])
-
-
-    UpdateResource.new(data: { update_type: "base_model", resource_type: resource_type, resource: resource, definition: {
-      field: field,
-      value: value
-    } }).tap do |event|
+    value = get_value(payload, step["value"])
+    UpdateResource.new(data: {
+      update_type: "base_model",
+      resource_type: resource_type,
+      resource: resource,
+      definition: {
+        field: field,
+        value: value
+      }
+    }).tap do |event|
       Rails.configuration.event_store.publish(event)
     end
   end
 
-  def get_value(payload, value)    
-    # Use regex to find all placeholders in the format {{field}}
+  def model_insert(step, payload)
+    resource = JSON.parse(payload[:resource])
+    payload.merge!(resource)
+
+    payload['post_id'] ||= payload['id']
+
+    post = Post.find(payload['post_id'])
+    payload['content'] = post.content
+
+    resource_type = step["model"]
+    attributes = step["attributes"].transform_values { |v| get_value(payload, v) }
+
+    CreateResource.new(data: {
+      insert_type: "base_model",
+      resource_type: resource_type,
+      resource: resource,
+      definition: { attributes: attributes }
+    }).tap do |event|
+      Rails.configuration.event_store.publish(event)
+    end
+  end
+
+  def get_value(payload, value)
     value.gsub(/\{\{(\w+)\}\}/) do |match|
-      # Extract the field name from the placeholder (e.g., 'name' from '{{name}}')
       field = match[2..-3]
-      
-      # Replace the placeholder with the corresponding value from the payload
-      # If the field doesn't exist in the payload, keep the placeholder unchanged
       payload.fetch(field, match)
     end
   end

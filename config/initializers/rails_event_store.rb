@@ -21,11 +21,12 @@ Rails.configuration.to_prepare do
     store.subscribe_to_all_events(RailsEventStore::LinkByCausationId.new)
     store.subscribe(GlobalHandler.new, to: [ResourceCreated, ResourceDeleted, ResourceUpdated])
     store.subscribe(UpdateModelHandler.new, to: [UpdateResource])
+    store.subscribe(CreateModelHandler.new, to: [CreateResource])
   end
 
   # Register command handlers below
   # Rails.configuration.command_bus.tap do |bus|
   #   bus.register(PrintInvoice, Invoicing::OnPrint.new)
   #   bus.register(SubmitOrder, ->(cmd) { Ordering::OnSubmitOrder.new.call(cmd) })
-# en
+  # end
 end
