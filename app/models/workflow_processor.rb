@@ -44,7 +44,9 @@ class WorkflowProcessor
 
   def find_next_step(step, payload)
     if step["type"] == "Condition"
-      evaluate_condition(step["condition"], payload, step) ? step["true_steps"].first : step["false_steps"].first
+      condition_result = evaluate_condition(step["condition"], payload, step)
+      return step["true_steps"].first if condition_result
+      return step["false_steps"].first
     else
       current_index = @workflow.definition["steps"].index(step)
       next_step = @workflow.definition["steps"][current_index + 1]
@@ -82,7 +84,6 @@ class WorkflowProcessor
 
   def evaluate_condition(condition, payload, step)
     field_value = payload[condition["field"]]
-
     result = case condition["operator"]
              when "Equal"
                field_value == condition["value"]
@@ -116,7 +117,6 @@ class WorkflowProcessor
              else
                false
              end
-
     result
   end
 
@@ -139,47 +139,45 @@ class WorkflowProcessor
   def model_update(step, payload)
     resource_type = payload[:resource_type]
     resource = JSON.parse(payload[:resource])
-    
+    payload.merge!(resource)
     field = step["field"]
-    value = get_value(resource, step["value"])
-    record = resource_type.constantize.find(resource["id"])
-    record.update!(field => value)
-    
-    payload["post_id"] = record.id
-    payload["title"] = record.title
-    payload["content"] = record.content
-    
-    UpdateResource.new(data: { update_type: "base_model", resource_type: resource_type, resource: resource, definition: {
-      field: field,
-      value: value
-    } }).tap do |event|
+    value = get_value(payload, step["value"])
+    UpdateResource.new(data: {
+      update_type: "base_model",
+      resource_type: resource_type,
+      resource: resource,
+      definition: {
+        field: field,
+        value: value
+      }
+    }).tap do |event|
       Rails.configuration.event_store.publish(event)
     end
   end
 
   def model_insert(step, payload)
-    resource_type = step["model"]
     resource = JSON.parse(payload[:resource])
-    post_id = payload["post_id"]
-    
-    attributes = step["attributes"].transform_values do |v|
-      get_value(payload, v).gsub("{{post_id}}", post_id.to_s)
-    end
-  
-    record = resource_type.constantize.create!(attributes)
-    payload["post_id"] = record.id
-    event_data = {
+    payload.merge!(resource)
+
+    payload['post_id'] ||= payload['id']
+
+    post = Post.find(payload['post_id'])
+    payload['content'] = post.content
+
+    resource_type = step["model"]
+    attributes = step["attributes"].transform_values { |v| get_value(payload, v) }
+
+    CreateResource.new(data: {
       insert_type: "base_model",
       resource_type: resource_type,
       resource: resource,
       definition: { attributes: attributes }
-    }
-    Rails.configuration.event_store.publish(
-      RubyEventStore::Event.new(data: event_data)
-    )
+    }).tap do |event|
+      Rails.configuration.event_store.publish(event)
+    end
   end
 
-  def get_value(payload, value)    
+  def get_value(payload, value)
     value.gsub(/\{\{(\w+)\}\}/) do |match|
       field = match[2..-3]
       payload.fetch(field, match)
